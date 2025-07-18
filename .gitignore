@@ -1,0 +1,11 @@
+**/__pycache__
+data/*
+model_checkpoints
+**/local*
+.idea
+**/*.bin
+**/*.log
+**/*.sh
+**/output*
+**/eval_results*
+**/berkeley_fanuc_manipulation

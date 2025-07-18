@@ -1,0 +1,12 @@
+data_type: "mix"
+video_dir: "/work/mgovind1/data/video_datasets"
+rgb_shape: [224, 224]
+skip_frame: 3
+weighted: false
+sub_data_configs: [
+  {
+    data_type: "video_json",
+    data_name: "bridge",
+    weight: 50
+  }
+]
