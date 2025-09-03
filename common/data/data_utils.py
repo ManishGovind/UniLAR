@@ -8,19 +8,21 @@ pyrootutils.setup_root(__file__, indicator='.project-root', pythonpath=True, dot
 from transformers import AutoTokenizer
 from transformers.utils import FEATURE_EXTRACTOR_NAME, get_file_from_repo
 import json
-from common.data.datasets import LMDBDataset_for_MotoGPT_RT1, LMDBDataset_for_MotoGPT_OXE, LMDBDataset_for_MotoGPT_Video, LMDBDataset_Mix, JsonDataset_for_MotoGPT_Video, NpzDataset_for_MotoGPT_Video, LMDBDataset_for_MotoGPT_CALVIN
+from common.data.datasets import LMDBDataset_for_MotoGPT_RT1, LMDBDataset_for_MotoGPT_OXE, LMDBDataset_for_MotoGPT_Video, LMDBDataset_Mix, JsonDataset_for_MotoGPT_Video, NpzDataset_for_MotoGPT_Video, LMDBDataset_for_MotoGPT_CALVIN , LMDBDataset_for_MotoGPT_RealWorld ,LMDBDataset_for_MotoGPT_CALVIN_DEPTH
 from common.data.mix_utils import BASE_STEPSIZE, DISPLAY_KEY
 from torchvision.transforms.v2 import Resize, InterpolationMode
 from torch.utils.data import ConcatDataset, WeightedRandomSampler
 
 data_type2dataset_cls = {
     'rt1': LMDBDataset_for_MotoGPT_RT1,
+    'realworld' : LMDBDataset_for_MotoGPT_RealWorld,
     'bridge' :  LMDBDataset_for_MotoGPT_RT1,
     'video': LMDBDataset_for_MotoGPT_Video,
     'oxe': LMDBDataset_for_MotoGPT_OXE,
     'video_json': JsonDataset_for_MotoGPT_Video,
     'video_npz': NpzDataset_for_MotoGPT_Video,
     'calvin': LMDBDataset_for_MotoGPT_CALVIN,
+    'calvin_depth' : LMDBDataset_for_MotoGPT_CALVIN_DEPTH
 }
 
 def load_dataset(data_config, extra_data_config):
@@ -78,8 +80,23 @@ def load_dataset(data_config, extra_data_config):
             eval_dataset = ConcatDataset(eval_datasets)
             
     else:
-        dataset_cls = data_type2dataset_cls[data_type]
-        train_dataset = dataset_cls(split='train', **data_config)
-        eval_dataset = dataset_cls(split='val', **data_config)
+       
+        if data_type != "calvin_mix" :
+            dataset_cls = data_type2dataset_cls[data_type]
+            train_dataset = dataset_cls(split='train', **data_config)
+            eval_dataset = dataset_cls(split='val', **data_config)
+        else :
+            train_datasets = []
+            eval_datasets = []
+            for dt in ['calvin' , 'calvin_depth']:
+                dataset_cls = data_type2dataset_cls[dt]
+                train_dataset = dataset_cls(split='train', **data_config)
+                eval_dataset = dataset_cls(split='val', **data_config)
+                train_datasets.append(train_dataset)
+                eval_datasets.append(eval_dataset)
+                
+            train_dataset = ConcatDataset(train_datasets)
+            eval_dataset = ConcatDataset(eval_datasets)
+                
     
     return train_dataset, eval_dataset

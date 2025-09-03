@@ -2,30 +2,58 @@ import torch.nn.functional as F
 import math
 import cv2
 from PIL import Image, ImageFont, ImageDraw
-import os
+import os,torch
 import torchvision.transforms as T
 import numpy as np
 
+
+
+def  to_pil(t: torch.Tensor) -> Image.Image:
+    return T.ToPILImage()(t)
+
 def visualize_latent_motion_reconstruction(
-    initial_frame,
-    next_frame,
-    recons_next_frame,
-    latent_motion_ids,
-    path
+    initial_frame=None,
+    next_frame=None,
+    initial_depth=None,
+    next_depth=None,
+    recons_next_frame=None,
+    recons_next_depth_frame=None,
+    latent_motion_ids=None,
+    path=""
 ):
-    c, h, w = initial_frame.shape
+    
+    
+    
+    panels: List[Tuple[str, Image.Image]] = []
+
+    if initial_frame is not None:
+        panels.append(("First RGB",   to_pil(initial_frame)))
+    if next_frame is not None:
+        panels.append(("next RGB",   to_pil(next_frame)))
+    if recons_next_frame is not None:
+        panels.append(("recon RGB",  to_pil(recons_next_frame)))
+
+    if initial_depth is not None:
+        panels.append(("First Depth",    to_pil(initial_depth)))
+    if next_depth is not None:
+        panels.append(("next Depth",     to_pil(next_depth)))
+    if recons_next_depth_frame is not None:
+        panels.append(("recon Depth",    to_pil(recons_next_depth_frame)))
+
+    if not panels:
+        raise ValueError("No images provided!")
+    
+    w, h = panels[0][1].size
     h = h + 30
-    initial_frame = T.ToPILImage()(initial_frame)
-    next_frame = T.ToPILImage()(next_frame)
-    recons_next_frame = T.ToPILImage()(recons_next_frame)
+    
+    # print(panels)
+    
     latent_motion_ids = latent_motion_ids.numpy().tolist()
-
-    compare_img = Image.new('RGB', size=(3*w, h))
+    n = len(panels)
+    compare_img = Image.new('RGB', size=(n*w, h))
     draw_compare_img = ImageDraw.Draw(compare_img)
-
-    compare_img.paste(initial_frame, box=(0, 0))
-    compare_img.paste(next_frame, box=(w, 0))
-    compare_img.paste(recons_next_frame, box=(2*w, 0))
+    for col, (label, im) in enumerate(panels):
+        compare_img.paste(im, box=(col*w, 0))
 
     font_path = os.path.join(cv2.__path__[0],'qt','fonts','DejaVuSans.ttf')
     font = ImageFont.truetype(font_path, size=12)

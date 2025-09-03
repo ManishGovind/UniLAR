@@ -70,7 +70,7 @@ class LatentMotionTokenizer_Trainer:
 
         latent_motion_tokenizer, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
             latent_motion_tokenizer, optimizer, train_dataloader, eval_dataloader, 
-            device_placement=[True, True, False, False]
+            device_placement=[True, True, True, True]
         )
         
         self.writer = SummaryWriter(os.path.join(save_path, 'logs'))
@@ -90,6 +90,7 @@ class LatentMotionTokenizer_Trainer:
         self.num_epochs = num_epochs
         self.print_steps = print_steps
         self.bs_per_gpu = bs_per_gpu
+        
 
 
     @property
@@ -204,41 +205,65 @@ class LatentMotionTokenizer_Trainer:
         os.makedirs(visualization_dir, exist_ok=True)
         self.print(f"Saving visualization results to {visualization_dir} ...")
         batch, _ = self.eval_prefetcher.next_without_none()
-
+        # batch, _  = self.train_prefetcher.next()
+        use_depth = ("depth_initial" in batch) and ("depth_future" in batch)
         orig_rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1) # (b, 2, c, h, w)
+        if use_depth :
+          orig_depth_seq = torch.cat([batch['depth_initial'], batch['depth_future']], dim=1)
+          depth_seq =  self.rgb_preprocessor(orig_depth_seq , depth=True) 
         rgb_seq = self.rgb_preprocessor(orig_rgb_seq, train=True)
+       
 
         self.latent_motion_tokenizer.eval()
         outputs = self.latent_motion_tokenizer(
             cond_pixel_values=rgb_seq[:,0],
             target_pixel_values=rgb_seq[:,1],
+            cond_depth_values=depth_seq[:,0] if use_depth else None, 
+            target_depth_values=depth_seq[:,1] if use_depth else None,
             return_recons_only=True
         )
-            
-        recons_rgb_future = self.rgb_preprocessor.post_process(outputs["recons_pixel_values"]).detach().cpu()  # (b, c, h, w)
+           
+        if "recons_pixel_values" in outputs :    
+            recons_rgb_future = self.rgb_preprocessor.post_process(outputs["recons_pixel_values"]).detach().cpu()  # (b, c, h, w)
+        if "recons_depth_values" in outputs :    
+            recons_depth_future = self.rgb_preprocessor.post_process(outputs["recons_depth_values"],depth=True).detach().cpu()
         gt_latent_motion_ids = outputs["indices"].detach().cpu() # (b, per_latent_motion_len)
         # orig_rgb_seq = orig_rgb_seq.detach().cpu()
         orig_rgb_seq = self.rgb_preprocessor.post_process(rgb_seq).detach().cpu()
-
+        if use_depth :
+            orig_depth_seq =  self.rgb_preprocessor.post_process(depth_seq, depth=True).detach().cpu()
+      
         for i in range(orig_rgb_seq.shape[0]):
             visualize_latent_motion_reconstruction(
                 initial_frame=orig_rgb_seq[i,0],
                 next_frame=orig_rgb_seq[i,1],
                 recons_next_frame=recons_rgb_future[i],
+                initial_depth=orig_depth_seq[i,0],
+                next_depth=orig_depth_seq[i,1],
+                recons_next_depth_frame=recons_depth_future[i],
                 latent_motion_ids=gt_latent_motion_ids[i],
-                path=os.path.join(visualization_dir, f"{self.process_index}-{i}.png")
+                path=os.path.join(visualization_dir, f"{self.process_index}-{i}.png"),
+               
             )
+               
 
 
     def calculate_loss(self, batch, train):
         # image preprocessing
         rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
         rgb_seq = self.rgb_preprocessor(rgb_seq, train=train)
-
+        
+        use_depth =  ("depth_initial" in batch) and ("depth_future" in batch)
+        if use_depth :
+            orig_depth_seq = torch.cat([batch['depth_initial'], batch['depth_future']], dim=1)
+            depth_seq =  self.rgb_preprocessor(orig_depth_seq, train=False, depth=True)
+            
         # compute loss
         loss = self.latent_motion_tokenizer(
             cond_pixel_values=rgb_seq[:,0],
-            target_pixel_values=rgb_seq[:,1]
+            target_pixel_values=rgb_seq[:,1],
+            cond_depth_values=depth_seq[:,0] if use_depth else None,
+            target_depth_values=depth_seq[:,1] if use_depth else None,
         )
 
         return loss

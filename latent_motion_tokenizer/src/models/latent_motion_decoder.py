@@ -27,6 +27,7 @@ class LatentMotionDecoder(nn.Module):
             self.decoder.bias.data.zero_()
 
         else:
+            
             self.decoder = nn.Sequential(
                 nn.Conv2d(
                     in_channels=config.hidden_size,
@@ -44,18 +45,21 @@ class LatentMotionDecoder(nn.Module):
     def forward(
         self,
         cond_input: Optional[torch.Tensor] = None,
-        latent_motion_tokens: Optional[torch.Tensor] = None
+        latent_motion_tokens: Optional[torch.Tensor] = None,
+        cond_depth_input : Optional[torch.Tensor] = None
     ) -> torch.Tensor:
 
         outputs = self.transformer(
             pixel_values=cond_input,
             latent_motion_tokens=latent_motion_tokens
         )
+        
+        
 
         sequence_output = outputs[0]
         sequence_output = sequence_output[:, -self.config.num_patches:]
         batch_size, sequence_length, num_channels = sequence_output.shape
-
+        
         if not self.is_io_hidden_states:
             height = width = math.floor(sequence_length**0.5)
             sequence_output = sequence_output.permute(0, 2, 1).contiguous().reshape(batch_size, num_channels, height, width)

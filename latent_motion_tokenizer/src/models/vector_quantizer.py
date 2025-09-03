@@ -15,13 +15,13 @@ class VectorQuantizer2(nn.Module):
     # backwards compatibility we use the buggy version by default, but you can
     # specify legacy=False to fix it.
     def __init__(self, n_e, e_dim, beta, remap=None, unknown_index="random",
-                 sane_index_shape=False, legacy=True):
+                 sane_index_shape=False, legacy=False):
         super().__init__()
         self.n_e = n_e
         self.e_dim = e_dim
         self.beta = beta
         self.legacy = legacy
-
+        print(f"legacy {legacy}")
         self.embedding = nn.Embedding(self.n_e, self.e_dim)
         self.embedding.weight.data.uniform_(-1.0 / self.n_e, 1.0 / self.n_e)
 
@@ -100,6 +100,7 @@ class VectorQuantizer2(nn.Module):
 
         # compute loss for embedding
         if not self.legacy:
+            # print("correctcommit loss")
             loss = self.beta * torch.mean((z_q.detach() - z) ** 2) + \
                    torch.mean((z_q - z.detach()) ** 2)
         else:

@@ -53,6 +53,7 @@ class RGB_PreProcessor(torch.nn.Module):
         self.rgb_shape = rgb_shape
         self.register_buffer('rgb_mean', torch.tensor(rgb_mean).view(-1, 1, 1))
         self.register_buffer('rgb_std', torch.tensor(rgb_std).view(-1, 1, 1))
+        
         self.do_random_resized_crop = do_random_resized_crop
         self.do_random_shift= do_random_shift
 
@@ -73,19 +74,30 @@ class RGB_PreProcessor(torch.nn.Module):
         self.train_transforms = torch.nn.Sequential(*train_transforms)
         
 
-    def forward(self, x, train=False):
+    def forward(self, x, train=False , depth=False):
         x = x.float()*(1/255.)
         if train:
             x = self.train_transforms(x)
         else:
             x = self.eval_transforms(x)
         # torchvision Normalize forces sync between CPU and GPU, so we use our own
-        x = (x - self.rgb_mean) / (self.rgb_std + 1e-6)
+        if depth :
+            d_min = x.amin(dim=(-2, -1), keepdim=True)
+            d_max = x.amax(dim=(-2, -1), keepdim=True)
+            x = (x - d_min) / (d_max - d_min + 1e-6)
+        else :   
+            x = (x - self.rgb_mean) / (self.rgb_std + 1e-6)  
         return x
 
-    def post_process(self, x):
-        x = x * self.rgb_std + self.rgb_mean
-        x = torch.clamp(x, min=0, max=1)
+    def post_process(self, x , depth=False):
+        if not depth :
+            x = x * self.rgb_std + self.rgb_mean
+            x = torch.clamp(x, min=0, max=1)
+        else : 
+            d_min = x.amin(dim=(-2, -1), keepdim=True)
+            d_max = x.amax(dim=(-2, -1), keepdim=True)
+            x = x * (d_max - d_min) + d_min
+            x = torch.clamp(x, min=0, max=1)
         return x
 
 
