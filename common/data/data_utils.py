@@ -32,6 +32,8 @@ def load_dataset(data_config, extra_data_config):
         data_config = dict(data_config)
 
     data_type = data_config.pop('data_type')
+    if data_type == "calvin_mix" :
+        
 
     key_map = {
         'latent_motion_pred': 'do_extract_future_frames',
