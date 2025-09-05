@@ -14,3 +14,12 @@ model_checkpoints
 *.yaml
 **/evaluation
 **/checkpoints
+# Ignore wandb runs
+wandb/
+**/wandb/
+**/wandb/*
+
+# Ignore stray PNGs if you don’t want them versioned
+*.png
+*.mp4
+*.npz
