@@ -10,11 +10,12 @@ from transformers import AutoTokenizer
 from common.models.model_utils import load_model
 from common.processors.preprocessor_utils import get_rgb_preprocessor
 from latent_motion_tokenizer.src.trainers.latent_motion_tokenizer_trainer import LatentMotionTokenizer_Trainer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader , Subset
 from functools import partial
 from common.data.data_utils import load_dataset
 
 def main(cfg):
+   
     # Prepare Latent Motion Tokenizer
     latent_motion_tokenizer_config_path = cfg['latent_motion_tokenizer_config_path']
     print(f"initializing Latent Motion Tokenizer from {latent_motion_tokenizer_config_path} ...")
@@ -32,7 +33,10 @@ def main(cfg):
         'do_extract_future_frames': True,
         'do_extract_action': False
     }
+
     train_dataset, eval_dataset = load_dataset(dataset_config_path, extra_data_config)
+    print("dataset loading" )
+    
     dataloader_cls = partial(
         DataLoader, 
         pin_memory=True, # Accelerate data reading
@@ -42,9 +46,12 @@ def main(cfg):
         batch_size=cfg['dataloader_config']['bs_per_gpu'],
         prefetch_factor= cfg['dataloader_config']['prefetch_factor']
     )
+    # max_samples = 2000
+    # train_dataset = Subset(train_dataset, list(range(min(len(train_dataset), max_samples))))
+    # eval_dataset = Subset(eval_dataset, list(range(min(len(eval_dataset), max_samples))))
     train_dataloader = dataloader_cls(train_dataset)
     eval_dataloader = dataloader_cls(eval_dataset)
-    
+   
     # Prepare Trainer
     trainer = LatentMotionTokenizer_Trainer(
         latent_motion_tokenizer=latent_motion_tokenizer,
@@ -54,10 +61,11 @@ def main(cfg):
         bs_per_gpu=cfg['dataloader_config']['bs_per_gpu'],
         **cfg['training_config']
     )
-
+    print("started training")
     # Start Training
     trainer.train()
-
+    
+        
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config_path', type=str, default="/group/40101/milkcychen/Moto/latent_motion_tokenizer/configs/train/data_calvin-vq_size128_dim32_num8_legacyTrue-vision_MaeLarge-decoder_queryFusionModeAdd_Patch196_useMaskFalse-mformer_legacyTrue-train_lr0.0001_bs256-aug_shiftTrue_resizedCropFalse.yaml")

@@ -78,12 +78,13 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, ep_len, num_sequ
     eval_sequences = get_sequences(num_sequences)
     num_seq_per_procs = num_sequences // num_procs
     eval_sequences = eval_sequences[num_seq_per_procs*procs_id:num_seq_per_procs*(procs_id+1)]
-
     results = []
     if not debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
     sequence_i = 0
+    
+   
     for initial_state, eval_sequence in eval_sequences:
         result = evaluate_sequence(env, model, task_oracle, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i, ep_len)
         results.append(result)
@@ -138,7 +139,7 @@ def rollout(env, model, task_oracle, subtask, val_annotations, debug, eval_dir, 
     for step in range(ep_len):
         if unfinished == 0:
             action = model.step(obs, lang_annotation)
-            unfinished = action.shape[0]
+            unfinished = action.shape[0]  
         obs, _, _, current_info = env.step(action[-unfinished])
         unfinished -= 1
         if debug:
@@ -197,7 +198,7 @@ def main(args):
         acc.num_processes,
         acc.process_index,
         eval_dir,
-        debug=args.record_evaluation_video,
+        debug=False,
     )).float().mean().to(device)
     acc.wait_for_everyone()
     avg_reward = acc.gather_for_metrics(avg_reward).mean()
@@ -212,7 +213,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--sample', type=json.loads, default='true')
-    parser.add_argument('--top_k', type=int, default=0)
+    parser.add_argument('--top_k', type=int, default=5)
     parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument('--beam_size', type=int, default=5)
     parser.add_argument('--parallel', type=json.loads, default='false')

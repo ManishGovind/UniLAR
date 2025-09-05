@@ -14,6 +14,7 @@ from tqdm import tqdm
 from collections import defaultdict
 from glob import glob
 import json
+from PIL import Image
 
 random.seed(42)
 
@@ -52,6 +53,15 @@ def save_to_lmdb(output_dir, input_dir):
                 txn.put(f'done_{cur_step}'.encode(), dumps(False))
                 rgb_static = torch.from_numpy(rearrange(frame['rgb_static'], 'h w c -> c h w'))
                 txn.put(f'rgb_static_{cur_step}'.encode(), dumps(encode_jpeg(rgb_static)))
+                ## Added my me
+                depth_frame = frame['depth_static']
+                d_min, d_max = depth_frame.min(), depth_frame.max()
+                depth_norm = ( (depth_frame - d_min) / (d_max - d_min) * 255.0 ).astype(np.uint8)
+                depth = Image.fromarray(depth_norm)
+                depth_np = np.array(depth)
+                depth_static = torch.from_numpy(rearrange(depth_np, 'h w  -> 1 h w'))
+                depth_static = depth_static.repeat(3, 1, 1) 
+                txn.put(f'depth_static_{cur_step}'.encode(), dumps(encode_jpeg(depth_static)))
                 rgb_gripper = torch.from_numpy(rearrange(frame['rgb_gripper'], 'h w c -> c h w'))
                 txn.put(f'rgb_gripper_{cur_step}'.encode(), dumps(encode_jpeg(rgb_gripper)))
                 txn.put(f'abs_action_{cur_step}'.encode(), dumps(torch.from_numpy(frame['actions'])))

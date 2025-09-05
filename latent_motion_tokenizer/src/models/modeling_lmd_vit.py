@@ -21,7 +21,6 @@ class LMDViTEmbeddings(nn.Module):
             self.patch_embeddings = nn.Linear(config.hidden_size, config.hidden_size, bias=True)
         else:
             self.patch_embeddings = ViTPatchEmbeddings(config)
-
         query_fusion_mode = getattr(config, 'query_fusion_mode', 'add')
         assert query_fusion_mode in ['add', 'concat']
         self.query_fusion_mode = query_fusion_mode
@@ -44,7 +43,9 @@ class LMDViTEmbeddings(nn.Module):
         latent_motion_tokens: torch.Tensor,
     ) -> torch.Tensor:
         batch_size = pixel_values.shape[0]
-        embeddings = self.patch_embeddings(pixel_values)
+        channels = pixel_values.shape[1]
+         
+        embeddings = self.patch_embeddings(pixel_values)   
 
         # insert [MASK] tokens to inputs
         if self.use_mask_token:

@@ -22,6 +22,7 @@ class MotoGPT_Trainer:
         moto_gpt,
         moto_gpt_config,
         latent_motion_tokenizer,
+        depth_latent_motion_tokenizer,
         rgb_preprocessor,
         lang_tokenizer,
         train_dataloader,
@@ -39,6 +40,7 @@ class MotoGPT_Trainer:
         bs_per_gpu=32,
         max_epoch=None,
         pred_binary_gripper_action=True,
+        depth_motion_pred=False
     ):
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
         accelerator= Accelerator(
@@ -46,7 +48,6 @@ class MotoGPT_Trainer:
             kwargs_handlers=[ddp_kwargs]
         )
         self.accelerator = accelerator
-
         if resume_ckpt_path is not None:
             self.print(f"resuming Moto-GPT from {resume_ckpt_path} ...")
 
@@ -75,12 +76,18 @@ class MotoGPT_Trainer:
             num_training_steps=num_epochs*total_prints_per_epoch,
         )
         moto_gpt, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
-            moto_gpt, optimizer, train_dataloader, eval_dataloader, 
-            device_placement=[True, True, False, False]
+            moto_gpt, optimizer, train_dataloader, eval_dataloader
         )
+        
+       
+       
         if latent_motion_tokenizer is not None:
             latent_motion_tokenizer = latent_motion_tokenizer.to(accelerator.device)
             latent_motion_tokenizer.eval()
+            
+        if depth_latent_motion_tokenizer is not None:
+                depth_latent_motion_tokenizer = depth_latent_motion_tokenizer.to(accelerator.device)
+                depth_latent_motion_tokenizer.eval()     
         
         self.writer = SummaryWriter(os.path.join(save_path, 'logs'))
         self.optimizer = optimizer
@@ -89,6 +96,7 @@ class MotoGPT_Trainer:
         self.moto_gpt = moto_gpt
         self.moto_gpt_config = moto_gpt_config
         self.latent_motion_tokenizer = latent_motion_tokenizer
+        self.depth_latent_motion_tokenizer = depth_latent_motion_tokenizer
         self.optimizer = optimizer
         self.train_prefetcher = DataPrefetcher(train_dataloader, self.device, lang_tokenizer=lang_tokenizer)
         self.eval_prefetcher = DataPrefetcher(eval_dataloader, self.device, lang_tokenizer=lang_tokenizer)
@@ -102,6 +110,19 @@ class MotoGPT_Trainer:
         self.print_steps = print_steps
         self.bs_per_gpu = bs_per_gpu
         self.pred_binary_gripper_action = pred_binary_gripper_action
+        self.pred_tokens_modality = moto_gpt_config['pred_tokens_modality']
+        self.output_modality_tokens = moto_gpt_config['output_modality_tokens']
+        self.pred_tokens_modality = moto_gpt_config.get('pred_tokens_modality', 'rgb')  
+        self.output_modality_tokens = moto_gpt_config.get('output_modality_tokens', 'same modal')  
+
+        # Optional: Sanity check and logging
+        assert isinstance(self.pred_tokens_modality, list), "'pred_tokens_modality' must be a list"
+        assert isinstance(self.output_modality_tokens, list), "'output_modality_tokens' must be a list"
+
+        # Optional print/debug
+        print("Prediction Modality:", self.pred_tokens_modality)
+        print("Output Tokens Modalities:", self.output_modality_tokens)
+        
 
 
     @property
@@ -126,6 +147,15 @@ class MotoGPT_Trainer:
         torch.save(state_dict, os.path.join(save_dir, "pytorch_model.bin"))
         omegaconf.OmegaConf.save(unwrapped_moto_gpt.config, os.path.join(save_dir, "config.yaml"))
         self.print(f"A new model checkpoint is saved to {save_dir}!!!")
+    
+    def get_latent_motion_tokenizer(self, batch):
+        modality = batch["modality"][0]  
+        if modality == 'depth' : 
+            return self.depth_latent_motion_tokenizer
+        else :
+            return self.latent_motion_tokenizer
+   
+    
         
     def train(self):
         step = 0
@@ -162,9 +192,11 @@ class MotoGPT_Trainer:
             cum_load_time = 0 
             clock = time()
             batch_idx = 0
+           
             batch, load_time = self.train_prefetcher.next()
-            
+
             while batch is not None:
+                
                 with self.accelerator.accumulate(self.moto_gpt):
 
                     self.moto_gpt.train()
@@ -212,7 +244,6 @@ class MotoGPT_Trainer:
                         visualization_dir = os.path.join(save_dir, 'visualization')
                         self.eval_latent_motion_gen(visualization_dir)
         
-
                 batch_idx += 1
                 step += 1
                 batch, load_time = self.train_prefetcher.next()
@@ -225,27 +256,60 @@ class MotoGPT_Trainer:
         self.print(f"Saving visualization results to {visualization_dir} ...")
         self.moto_gpt.eval()
         batch, _ = self.eval_prefetcher.next_without_none()
-
+        is_depth = batch["modality"][0] == "depth"
+        
         orig_rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
         rgb_seq = self.rgb_preprocessor(orig_rgb_seq, train=True)
         rgb_initial = rgb_seq[:,:1]
+        
+        orig_depth_seq = torch.cat([batch['depth_initial'], batch['depth_future']], dim=1)
+        depth_seq = self.rgb_preprocessor(orig_depth_seq, train=False, depth=True)
+        depth_initial = depth_seq[:,:1]
 
         # b, t, c, h, w = batch['rgb_future'].shape
         b, t, c, h, w = rgb_seq.shape
         t = t - 1
-        gt_latent_motion_ids = self.latent_motion_tokenizer(
-            cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
-            target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
-            return_motion_token_ids_only=True
-        )
-        recons_rgb_future = self.latent_motion_tokenizer.decode_image(
-            cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
-            given_motion_token_ids=gt_latent_motion_ids
-        )["recons_pixel_values"]
+        motion_tokenizer = self.get_latent_motion_tokenizer(batch)
+        
+        if not is_depth :
+            if self.moto_gpt_config.pred_tokens_modality == "unified" :
+               
+                gt_latent_motion_ids = motion_tokenizer(
+                cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
+                cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),
+                target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),
+                return_motion_token_ids_only=True
+                )["indices"]
+                recons_rgb_future = motion_tokenizer.decode_image_with_unified_rep(
+                    cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                    given_motion_token_ids=gt_latent_motion_ids
+                )["recons_pixel_values"]
+            else :    
+                gt_latent_motion_ids = motion_tokenizer(
+                    cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                    target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
+                    return_motion_token_ids_only=True
+                )["indices_rgb"]
+                recons_rgb_future = motion_tokenizer.decode_image(
+                    cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                    given_motion_token_ids=gt_latent_motion_ids
+                )["recons_pixel_values"]
+        else :
+            gt_latent_motion_ids = motion_tokenizer(
+                cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),
+                target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),
+                return_motion_token_ids_only=True
+            )["indices_depth"]
+            recons_rgb_future = motion_tokenizer.decode_depth(
+                cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),
+                given_motion_token_ids=gt_latent_motion_ids
+            )["recons_depth_values"]
+                
 
         gt_latent_motion_ids = gt_latent_motion_ids.reshape(b, t, -1)
         recons_rgb_future = recons_rgb_future.reshape(b, t, c, h, w)
-        recons_rgb_future = self.rgb_preprocessor.post_process(recons_rgb_future)
+        recons_rgb_future = self.rgb_preprocessor.post_process(recons_rgb_future , depth=is_depth)
 
         decoding_mode2preds = {
             "ground_truth_recons": {
@@ -312,10 +376,18 @@ class MotoGPT_Trainer:
                     )
                     cur_latent_motion_id_preds = pred['latent_motion_id_preds'] # (b, per_latent_motion_len)
                     cur_latent_motion_ids[:,buffer_len-1] = cur_latent_motion_id_preds
-                    cur_frame_preds = self.latent_motion_tokenizer.decode_image(
-                        cond_pixel_values=cur_cond_pixel_values,
-                        given_motion_token_ids=cur_latent_motion_id_preds
-                    )["recons_pixel_values"] # (b, c, h, w)
+                    if self.moto_gpt_config.pred_tokens_modality == "unified" :
+                        cur_frame_preds = self.latent_motion_tokenizer.decode_image_with_unified_rep(
+                            cond_pixel_values=cur_cond_pixel_values,
+                            given_motion_token_ids=cur_latent_motion_id_preds
+                        )["recons_pixel_values"] # (b, c, h, w)
+                    else :
+                        cur_frame_preds = self.latent_motion_tokenizer.decode_image(
+                            cond_pixel_values=cur_cond_pixel_values,
+                            given_motion_token_ids=cur_latent_motion_id_preds
+                        )["recons_pixel_values"] # (b, c, h, w)
+                            
+                    
                     cur_cond_pixel_values = cur_frame_preds
                     frame_preds.append(cur_frame_preds.unsqueeze(1))
                     latent_motion_id_preds.append(cur_latent_motion_id_preds.unsqueeze(1))
@@ -347,28 +419,67 @@ class MotoGPT_Trainer:
 
     def calculate_loss(self, batch, train):
         # image preprocessing
+        modality = batch["modality"][0] 
         if self.moto_gpt_config.latent_motion_pred:
+    
             rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
             rgb_seq = self.rgb_preprocessor(rgb_seq, train=train)
             rgb_initial = rgb_seq[:,:1]
+            
+            depth_seq = torch.cat([batch['depth_initial'], batch['depth_future']], dim=1)
+            depth_seq = self.rgb_preprocessor(depth_seq, train=False , depth=True)
+            depth_initial = depth_seq[:,:1]
         else:
-            rgb_initial = self.rgb_preprocessor(batch['rgb_initial'], train=train)
-
+            rgb_initial = self.rgb_preprocessor(batch['rgb_initial'],train=train)
+            depth_initial = self.rgb_preprocessor(batch['depth_initial'],train=False, depth=True)
+            
         # obtain ground-truth latent motion ids
         if self.moto_gpt_config.latent_motion_pred:
             # b, t, c, h, w = batch['rgb_future'].shape
             b, t, c, h, w = rgb_seq.shape
             t = t - 1
-            latent_motion_ids = self.latent_motion_tokenizer(
-                cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
-                target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
-                return_motion_token_ids_only=True
-            ).reshape(b, t, -1)
+            motion_tokenizer = self.get_latent_motion_tokenizer(batch)
+            if motion_tokenizer is None:
+                raise ValueError(
+                    f"No tokenizer available for modality='{modality}'. "
+                    "Check cfg.use_depth_data and that both tokenizers were loaded."
+                )
+            if  modality != "depth":
+                
+                if self.moto_gpt_config.pred_tokens_modality == "unified"  :
+                    all_latent_motion_ids = motion_tokenizer(
+                        cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                        target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
+                        cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),     
+                        target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),    
+                        return_motion_token_ids_only=True
+                    )
+                    
+                    latent_motion_ids = all_latent_motion_ids["indices"].reshape(b, t, -1)    #unified motion tokens 
+                    rgb_latent_motion_ids = all_latent_motion_ids["indices_rgb"].reshape(b, t, -1)
+                    depth_latent_motion_ids = all_latent_motion_ids["indices_depth"].reshape(b, t, -1)
+                      
+                    
+                if self.moto_gpt_config.pred_tokens_modality == "rgb" :
+                    latent_motion_ids = motion_tokenizer(
+                        cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
+                        target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
+                        return_motion_token_ids_only=True
+                    )["indices_rgb"].reshape(b, t, -1)
+                        
+            else :
+                latent_motion_ids = motion_tokenizer(
+                    cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),
+                    target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),
+                    return_motion_token_ids_only=True
+                )["indices_depth"].reshape(b, t, -1)         
         else:
+            # print("no MOTO")
             latent_motion_ids = None
 
         # compute loss
         attention_mask = batch['mask'][..., 0]
+        # print("RGB initial shape in moto training forward pass" , rgb_initial.shape )
         pred = self.moto_gpt(
             rgb=rgb_initial, # (b, 1, c, h, w)
             language=batch['lang_input_ids'],
@@ -395,10 +506,21 @@ class MotoGPT_Trainer:
             gripper_action_loss_func = F.binary_cross_entropy_with_logits
         else:
             gripper_action_loss_func = F.smooth_l1_loss
+            
+        # print(pred['arm_action_preds'])    
         
         loss['action_gripper'] = masked_loss(pred['gripper_action_preds'], batch['actions'][..., -1:].float(), batch['mask'], 0, gripper_action_loss_func) if pred['gripper_action_preds'] is not None else torch.tensor(0.0).to(device)
-        loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
-        total_loss = 100 * loss['action_arm'] + loss['action_gripper'] + loss['latent_motion']
+        if self.output_modality_tokens == "cross modal" :
+            if  batch["modality"][0] == "depth" :
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], depth_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+            elif batch["modality"][0] == "rgb" :   
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], rgb_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+            else :
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)    
+        else :
+            loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+        
+        total_loss = 100 * loss['action_arm'] + loss['action_gripper'] + loss['latent_motion'] 
         loss['total_loss'] = total_loss
         return loss
 
@@ -412,12 +534,21 @@ class MotoGPT_Trainer:
         load_pecnt = self.accelerator.gather_for_metrics(load_pecnt).mean()
         fps = (self.bs_per_gpu*self.print_steps*(self.moto_gpt_config.sequence_length+1)) / (time()-clock)
         fps = self.accelerator.gather_for_metrics(torch.tensor(fps).to(self.device)).sum()
-
+        # if 100. * batch_idx * self.bs_per_gpu * self.accelerator.num_processes / len(self.train_prefetcher) > 100.0 :
+        #     print("debugging batch idx", batch_idx)
+        #     print("debugging batch idx", 100. * batch_idx * self.bs_per_gpu * self.accelerator.num_processes)
+        #     print(len(self.train_prefetcher))
+        # else :
+        #     print("debugging batch idx", batch_idx)
+                
+            
+            
+         
         text = 'Train Epoch: {} [{}/{} ({:.0f}%)] FPS:{:.5f} Load Pertentage:{:.5f} LR:{}'.format(
             epoch, 
             batch_idx * self.bs_per_gpu * self.accelerator.num_processes, 
             len(self.train_prefetcher), 
-            100. * batch_idx * self.bs_per_gpu * self.accelerator.num_processes / len(self.train_prefetcher),
+            100. * batch_idx * self.bs_per_gpu *  self.accelerator.num_processes  / len(self.train_prefetcher),
             fps,
             load_pecnt,
             self.scheduler.get_last_lr()[0],

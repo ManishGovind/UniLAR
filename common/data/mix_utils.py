@@ -62,6 +62,8 @@ BASE_STEPSIZE = {
     'berkeley_gnm_cory_hall': 5,
     'berkeley_gnm_sac_son': 10,
     'robot_vqa': 10,
+    'real_world_task2_stackcube_30samples' : 3,
+    'real_world_task1_carrot_objectbowl' : 3
 }
 
 
@@ -80,4 +82,6 @@ DISPLAY_KEY = {
     'uiuc_d3field2': 'image_2',
     'uiuc_d3field3': 'image_3',
     'uiuc_d3field4': 'image_4',
+    'real_world_task2_stackcube_30samples' : 'image',
+    'real_world_task1_carrot_objectbowl' : 'image'
 }

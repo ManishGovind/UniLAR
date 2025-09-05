@@ -64,6 +64,7 @@ class DataPrefetcher():
 
     def __len__(self):
         return len(self.loader.dataset)
+        
 
     def next(self):
         clock = time()
@@ -112,7 +113,7 @@ class LMDBDataset_for_MotoGPT(Dataset):
 
 
         super().__init__()
-
+       
         self.sequence_length = sequence_length
         self.chunk_size = chunk_size
         self.skip_frame = skip_frame
@@ -122,6 +123,9 @@ class LMDBDataset_for_MotoGPT(Dataset):
 
         self.dummy_rgb_initial = torch.zeros(1, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
         self.dummy_rgb_future = torch.zeros(sequence_length, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
+        
+        
+        
         self.dummy_actions = torch.zeros(sequence_length, chunk_size, act_dim)
         self.dummy_mask = torch.zeros(sequence_length, chunk_size)
         self.dummy_latent_mask = torch.zeros(sequence_length)
@@ -146,13 +150,14 @@ class LMDBDataset_for_MotoGPT(Dataset):
     def extract_lang_goal(self, idx, cur_episode):
         feature_dict = loads(self.txn.get(f'feature_dict_{idx}'.encode()))
         lang = feature_dict['observation']['natural_language_instruction'].decode().lower().strip('.')
+        print(lang)
         return lang
 
     def get_video_path(self, cur_episode):
         # return os.path.join(self.video_dir, f'{self.split}_eps_{cur_episode:08d}.mp4')
         raise NotImplementedError
 
-    def extract_frames(self, idx, cur_episode, delta_t, rgb_initial, rgb_future, latent_mask):
+    def extract_frames(self, idx, cur_episode, delta_t, rgb_initial, rgb_future, latent_mask , depth_initial, depth_future):
         start_local_step = loads(self.txn.get(f'local_step_{idx}'.encode()))
         video_path = self.get_video_path(cur_episode)
         video = cv2.VideoCapture(video_path)
@@ -169,6 +174,7 @@ class LMDBDataset_for_MotoGPT(Dataset):
             frame = torch.from_numpy(rearrange(frame, 'h w c -> c h w'))
             if self.rgb_preprocessor is not None:
                 frame  = self.rgb_preprocessor(frame)
+                   
             return frame
 
         rgb_initial[0] = _extract_frame(start_local_step)
@@ -214,6 +220,9 @@ class LMDBDataset_for_MotoGPT(Dataset):
                 # dummy features
                 rgb_initial = self.dummy_rgb_initial.clone()
                 rgb_future = self.dummy_rgb_future.clone()
+                depth_initial =  self.dummy_rgb_initial.clone()
+                depth_future = self.dummy_rgb_future.clone()
+                
                 actions = self.dummy_actions.clone()
                 mask = self.dummy_mask.clone()
                 latent_mask = self.dummy_latent_mask.clone()
@@ -225,7 +234,7 @@ class LMDBDataset_for_MotoGPT(Dataset):
                 self.extract_frames(
                     idx=idx, cur_episode=cur_episode, delta_t=delta_t,
                     rgb_initial=rgb_initial, 
-                    rgb_future=rgb_future, latent_mask=latent_mask
+                    rgb_future=rgb_future, latent_mask=latent_mask , depth_initial=depth_initial,depth_future=depth_future
                 )
 
                 # extract actions
@@ -243,6 +252,8 @@ class LMDBDataset_for_MotoGPT(Dataset):
                     "lang": lang,
                     "rgb_initial": rgb_initial,
                     "rgb_future": rgb_future,
+                    "depth_initial": depth_initial,
+                    "depth_future": depth_future,
                     "actions": actions,
                     "mask": mask,
                     "latent_mask": latent_mask,
@@ -283,24 +294,70 @@ class LMDBDataset_for_MotoGPT_RT1(LMDBDataset_for_MotoGPT_OXE):
             action.append(np.clip(feature_dict['action'][act_name], act_min, act_max))
         action = np.concatenate(action)
         action = torch.from_numpy(action)
+        
         return action
 
 
+
+class LMDBDataset_for_MotoGPT_RealWorld(LMDBDataset_for_MotoGPT_OXE):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dataset_stats_path  =  os.path.join(self.lmdb_dir, 'dataset_statistics.json')
+        with open(self.dataset_stats_path) as f:         
+            metadata = json.load(f)
+
+        self.action_mean = torch.tensor(metadata["action"]["mean"])
+        self.action_std  = torch.tensor(metadata["action"]["std"])
+        self.action_min = torch.tensor(metadata["action"]["min"])
+        self.action_max  = torch.tensor(metadata["action"]["max"])
+        self.eps =  1e-8                     
+        print(self.dataset_stats_path)
+  
+           
+    def extract_action(self, idx):
+        feature_dict = loads(self.txn.get(f'feature_dict_{idx}'.encode()))
+        action = feature_dict['action']
+        # print("gripper action", action[-1])
+        # print("rel arm actions==========" , action)
+        
+        action = torch.as_tensor(action)
+       
+        # print("rel arm  actions in  mm==========" , action)
+        
+        # action_norm =   (action - self.action_mean) / (self.action_std + self.eps)
+        action_norm = 2 * (action[:6] - self.action_q01[:6]) / (self.action_q99[:6]  -  self.action_q01[:6] + self.eps) - 1
+        action_norm = torch.clamp(action_norm , -1 , 1)
+        action[:6] = action_norm
+        
+        # print("=====norm rel  actions" , action) 
+        # recon = ((action_norm + 1 ) * 0.5 ) * (self.action_q99[:6]  -  self.action_q01[:6] + self.eps) + self.action_q01[:6]
+        # print("normalized action minmax" , action_norm )
+        # print("recon action**********", recon )
+        return action
+
 class LMDBDataset_for_MotoGPT_CALVIN(LMDBDataset_for_MotoGPT):
+   
     def extract_lang_goal(self, idx, cur_episode):
         lang = loads(self.txn.get(f'inst_{cur_episode}'.encode()))
         return lang
 
-    def extract_frames(self, idx, cur_episode, delta_t, rgb_initial, rgb_future, latent_mask):
+    def extract_frames(self, idx, cur_episode, delta_t, rgb_initial, rgb_future, latent_mask,depth_initial,depth_future):
         rgb_initial[0] = decode_jpeg(loads(self.txn.get(f'rgb_static_{idx}'.encode())))
-
+        depth_initial[0] = decode_jpeg(loads(self.txn.get(f'depth_static_{idx}'.encode())))
+        
         if self.do_extract_future_frames:
             for i in range(self.sequence_length):
                 if loads(self.txn.get(f'cur_episode_{idx+(i+1)*delta_t}'.encode())) == cur_episode:
                     rgb_future[i] = decode_jpeg(loads(self.txn.get(f'rgb_static_{idx+(i+1)*delta_t}'.encode())))
+                    depth_future[i] = decode_jpeg(loads(self.txn.get(f'depth_static_{idx+(i+1)*delta_t}'.encode())))
                     latent_mask[i] = 1
                 else:
                     break
+
+    
+    
+    
+                
 
     def extract_actions(self, idx, cur_episode, delta_t, actions, mask):
         for i in range(self.sequence_length):
@@ -314,14 +371,58 @@ class LMDBDataset_for_MotoGPT_CALVIN(LMDBDataset_for_MotoGPT):
     def extract_action(self, idx):
         action = loads(self.txn.get(f'rel_action_{idx}'.encode()))
         action[-1] = (action[-1] + 1) / 2
+        # print(action)
+        # print("gripper action", action[-1])
+        # print("arm actions" , action[:6])
         return action
+    
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample['modality'] = 'rgb'
+        return sample
 
+class LMDBDataset_for_MotoGPT_CALVIN_Doubled(LMDBDataset_for_MotoGPT_CALVIN):
+    """
+    Doubles the dataset length:
+      idx < N      -> RGB sample with modality="rgb"
+      idx >= N     -> Depth sample with modality="depth"
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.base_len = super().__len__()  # original length
+        print(self.base_len)
 
+    def __len__(self):
+        return 2 * self.base_len
 
+    def __getitem__(self, idx):
+        if idx < self.base_len:
+            sample = super().__getitem__(idx)
+            sample['modality'] = 'rgb'
+        else:
+            # Second half → Depth
+            print("depth")
+            base_idx = idx - self.base_len
+            sample = super().__getitem__(base_idx)
+            sample['modality']  = 'depth'
+        return sample
 
+    
 
+class LMDBDataset_for_MotoGPT_CALVIN_DEPTH(LMDBDataset_for_MotoGPT_CALVIN):
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample['modality'] = 'depth'
+        return sample
+     
 
-
+class LMDBDataset_for_MotoGPT_CALVIN_UNIFIED(LMDBDataset_for_MotoGPT_CALVIN):
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample['modality'] = 'unified'
+        return sample
+          
+    
 
 
 class JsonDataset_for_MotoGPT_Video(Dataset):
@@ -354,7 +455,6 @@ class JsonDataset_for_MotoGPT_Video(Dataset):
 
         split, start_ratio, end_ratio = get_split_and_ratio(split, video_metadata.keys())
         self.split = split
-
         video_metadata = video_metadata[split]
         videos = video_metadata['videos']
         start_step = int(len(videos) * start_ratio) 
@@ -381,12 +481,12 @@ class JsonDataset_for_MotoGPT_Video(Dataset):
                 raise e
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = torch.from_numpy(rearrange(frame, 'h w c -> c h w'))
+            video.release()
             if self.rgb_preprocessor is not None:
                 frame  = self.rgb_preprocessor(frame)
             return frame
 
         rgb_initial[0] = _extract_frame(start_local_step)
-
         for i in range(self.sequence_length):
             next_local_step = start_local_step+(i+1)*delta_t
             if next_local_step < num_frames:
@@ -434,7 +534,8 @@ class JsonDataset_for_MotoGPT_Video(Dataset):
             "latent_mask": latent_mask,
             "idx": idx,
             "delta_t": delta_t,
-            "start_local_step": start_local_step
+            "start_local_step": start_local_step,
+            "base_name": video_basename
         }
 
     
@@ -444,19 +545,12 @@ class JsonDataset_for_MotoGPT_Video(Dataset):
                 video_idx = idx % self.num_videos
                 return self.obtain_item(video_idx)
             except Exception as e:
-                # print(e)
+                print(e)
                 idx = random.randint(0, len(self)-1)
             
 
     def __len__(self):
         return self.dataset_len
-
-
-
-
-
-
-
 
 class NpzDataset_for_MotoGPT_Video(Dataset):
     def __init__(
@@ -471,8 +565,11 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
         self.skip_frame = skip_frame
         self.max_skip_frame = max_skip_frame
         self.dummy_rgb_initial = torch.zeros(1, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
-        self.dummy_rgb_future = torch.zeros(sequence_length, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
+        self.dummy_depth_initial = torch.zeros(1, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
+        self.dummy_rgb_future = torch.zeros(sequence_length, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8) 
+        self.dummy_depth_future = torch.zeros(sequence_length, 3, rgb_shape[0], rgb_shape[1], dtype=torch.uint8)
         self.dummy_latent_mask = torch.zeros(sequence_length)
+        # self.resize = Resize([224,224], interpolation=InterpolationMode.BICUBIC, antialias=True)
 
         if split == 'train':
             split = 'training'
@@ -499,12 +596,21 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
         return os.path.join(self.npz_dir, npz_basename)
 
     def extract_frames(self, npz_basename, delta_t, 
-                       rgb_initial, rgb_future, latent_mask):
+                       rgb_initial, rgb_future, depth_initial , depth_future, latent_mask):
         
         def _extract_frame(npz_idx):
             npz_path = self.get_npz_path(f"episode_{str(npz_idx).zfill(7)}.npz")
             try:
                 frame = Image.fromarray(np.load(npz_path)['rgb_static']).convert("RGB")
+                
+                depth_np = np.load(npz_path)['depth_static']
+                d_min, d_max = depth_np.min(), depth_np.max()
+                if d_max - d_min > 1e-6:
+                    depth_norm = ( (depth_np - d_min) / (d_max - d_min) * 255.0 ).astype(np.uint8)
+                else :
+                    depth_norm = np.zeros_like(depth, dtype=np.uint8)    
+                
+                depth = Image.fromarray(depth_norm)
             except Exception as e:
                 raise e
 
@@ -512,16 +618,26 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
             frame = torch.from_numpy(rearrange(frame, 'h w c -> c h w'))
             if self.rgb_preprocessor is not None:
                 frame  = self.rgb_preprocessor(frame)
-            return frame
+            
+            
+            depth = np.array(depth)
+            if depth.ndim == 2:
+                depth = torch.from_numpy(depth).unsqueeze(0)  # (1, H, W)
+            elif depth.ndim == 3:
+                depth = torch.from_numpy(rearrange(depth, 'h w c -> c h w'))  # (C, H, W)
+            else:
+                raise ValueError(f"Unexpected depth image shape: {depth.shape}")
+                
+            depth = depth.repeat(3, 1, 1)    
+            return frame , depth
 
         start_npz_path = self.get_npz_path(npz_basename)
         start_npz_idx = int(npz_basename.split("_")[-1].split(".")[0])
-        rgb_initial[0] = _extract_frame(start_npz_idx)
-
+        rgb_initial[0], depth_initial[0] = _extract_frame(start_npz_idx)  # extract initial depth map
         for i in range(self.sequence_length):
             next_npz_idx = start_npz_idx+(i+1)*delta_t
             try:
-                rgb_future[i] = _extract_frame(next_npz_idx)
+                rgb_future[i] , depth_future[i]  = _extract_frame(next_npz_idx)  # extract future depth map
                 latent_mask[i] = 1
             except:
                 break
@@ -540,6 +656,8 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
         # dummy features
         rgb_initial = self.dummy_rgb_initial.clone()
         rgb_future = self.dummy_rgb_future.clone()
+        depth_initial = self.dummy_depth_initial.clone()
+        depth_future = self.dummy_depth_future.clone()
         latent_mask = self.dummy_latent_mask.clone()
 
         # extract initial frame and future frames
@@ -547,7 +665,9 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
             npz_basename=npz_basename,
             delta_t=delta_t,
             rgb_initial=rgb_initial, 
-            rgb_future=rgb_future, 
+            rgb_future=rgb_future,
+            depth_initial=depth_initial, 
+            depth_future=depth_future,
             latent_mask=latent_mask
         )
 
@@ -557,8 +677,9 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
         return {
             "rgb_initial": rgb_initial,
             "rgb_future": rgb_future,
+            "depth_initial" :depth_initial,
+            "depth_future" : depth_future,
             "latent_mask": latent_mask,
-
             "idx": idx,
             "delta_t": delta_t,
         }
@@ -569,6 +690,7 @@ class NpzDataset_for_MotoGPT_Video(Dataset):
             try:
                 return self.obtain_item(idx)
             except Exception as e:
+                # print(e)
                 idx = random.randint(0, len(self)-1)
             
 
