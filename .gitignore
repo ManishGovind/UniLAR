@@ -5,6 +5,12 @@ model_checkpoints
 .idea
 **/*.bin
 **/*.log
+**/*.sh
 **/output*
 **/eval_results*
 **/berkeley_fanuc_manipulation
+**/configs
+**/scripts
+*.yaml
+**/evaluation
+**/checkpoints
