@@ -319,18 +319,21 @@ class LMDBDataset_for_MotoGPT_RealWorld(LMDBDataset_for_MotoGPT_OXE):
         action = feature_dict['action']
         # print("gripper action", action[-1])
         # print("rel arm actions==========" , action)
-        action = torch.as_tensor(action)
-        # action_norm =   (action[:6] - self.action_mean[:6]) / (self.action_std[:6] + self.eps)
-        action_norm = (action[:6] - self.action_min[:6]) / (self.action_max[:6]  -  self.action_min[:6] + self.eps)
-        action[:6] = action_norm
-        print("after arm actions" , action) 
-        # recon = action_norm * (self.action_max[:6]  -  self.action_min[:6] + self.eps) + self.action_min[:6]
-        # print("normalized action" , action )
         
+        action = torch.as_tensor(action)
+       
+        # print("rel arm  actions in  mm==========" , action)
+        
+        # action_norm =   (action - self.action_mean) / (self.action_std + self.eps)
+        action_norm = 2 * (action[:6] - self.action_q01[:6]) / (self.action_q99[:6]  -  self.action_q01[:6] + self.eps) - 1
+        action_norm = torch.clamp(action_norm , -1 , 1)
+        action[:6] = action_norm
+        
+        # print("=====norm rel  actions" , action) 
+        # recon = ((action_norm + 1 ) * 0.5 ) * (self.action_q99[:6]  -  self.action_q01[:6] + self.eps) + self.action_q01[:6]
         # print("normalized action minmax" , action_norm )
         # print("recon action**********", recon )
         return action
-
 
 class LMDBDataset_for_MotoGPT_CALVIN(LMDBDataset_for_MotoGPT):
    
@@ -412,6 +415,13 @@ class LMDBDataset_for_MotoGPT_CALVIN_DEPTH(LMDBDataset_for_MotoGPT_CALVIN):
         sample['modality'] = 'depth'
         return sample
      
+
+class LMDBDataset_for_MotoGPT_CALVIN_UNIFIED(LMDBDataset_for_MotoGPT_CALVIN):
+    def __getitem__(self, idx):
+        sample = super().__getitem__(idx)
+        sample['modality'] = 'unified'
+        return sample
+          
     
 
 

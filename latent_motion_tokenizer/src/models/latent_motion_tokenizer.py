@@ -44,7 +44,7 @@ class LatentMotionTokenizer(nn.Module):
 
         self.m_former = m_former
         
-        self.m_former_depth = m_former_depth
+        self.m_former_depth = m_former_depth if m_former_depth else m_former
 
         self.vector_quantizer = vector_quantizer
         self.vq_unified = vector_quantizer_uni
@@ -60,7 +60,7 @@ class LatentMotionTokenizer(nn.Module):
         )
 
         self.decoder = decoder
-        self.depth_decoder = depth_decoder
+        self.depth_decoder = depth_decoder if depth_decoder else decoder
         self.hidden_state_decoder = hidden_state_decoder
         
         self.cat_fuser = nn.Linear(2 * codebook_dim, codebook_dim)

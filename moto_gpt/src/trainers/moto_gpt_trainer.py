@@ -111,7 +111,18 @@ class MotoGPT_Trainer:
         self.bs_per_gpu = bs_per_gpu
         self.pred_binary_gripper_action = pred_binary_gripper_action
         self.pred_tokens_modality = moto_gpt_config['pred_tokens_modality']
-        print("Modility predicted", self.moto_gpt_config.pred_tokens_modality )
+        self.output_modality_tokens = moto_gpt_config['output_modality_tokens']
+        self.pred_tokens_modality = moto_gpt_config.get('pred_tokens_modality', 'rgb')  
+        self.output_modality_tokens = moto_gpt_config.get('output_modality_tokens', 'same modal')  
+
+        # Optional: Sanity check and logging
+        assert isinstance(self.pred_tokens_modality, list), "'pred_tokens_modality' must be a list"
+        assert isinstance(self.output_modality_tokens, list), "'output_modality_tokens' must be a list"
+
+        # Optional print/debug
+        print("Prediction Modality:", self.pred_tokens_modality)
+        print("Output Tokens Modalities:", self.output_modality_tokens)
+        
 
 
     @property
@@ -408,7 +419,7 @@ class MotoGPT_Trainer:
 
     def calculate_loss(self, batch, train):
         # image preprocessing
-        is_depth = batch["modality"][0] == "depth"
+        modality = batch["modality"][0] 
         if self.moto_gpt_config.latent_motion_pred:
     
             rgb_seq = torch.cat([batch['rgb_initial'], batch['rgb_future']], dim=1)
@@ -433,17 +444,23 @@ class MotoGPT_Trainer:
                     f"No tokenizer available for modality='{modality}'. "
                     "Check cfg.use_depth_data and that both tokenizers were loaded."
                 )
-            if  not is_depth:
+            if  modality != "depth":
                 
-                if self.moto_gpt_config.pred_tokens_modality == "unified" :
-                    latent_motion_ids = motion_tokenizer(
+                if self.moto_gpt_config.pred_tokens_modality == "unified"  :
+                    all_latent_motion_ids = motion_tokenizer(
                         cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
                         target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
-                        cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),     #added for unified else none
-                        target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),    #added for unified else none
+                        cond_depth_values=depth_seq[:,:-1].reshape(-1, c, h, w),     
+                        target_depth_values=depth_seq[:,1:].reshape(-1, c, h, w),    
                         return_motion_token_ids_only=True
-                    )["indices"].reshape(b, t, -1)
-                if self.moto_gpt_config.pred_tokens_modality == "RGB" :
+                    )
+                    
+                    latent_motion_ids = all_latent_motion_ids["indices"].reshape(b, t, -1)    #unified motion tokens 
+                    rgb_latent_motion_ids = all_latent_motion_ids["indices_rgb"].reshape(b, t, -1)
+                    depth_latent_motion_ids = all_latent_motion_ids["indices_depth"].reshape(b, t, -1)
+                      
+                    
+                if self.moto_gpt_config.pred_tokens_modality == "rgb" :
                     latent_motion_ids = motion_tokenizer(
                         cond_pixel_values=rgb_seq[:,:-1].reshape(-1, c, h, w),
                         target_pixel_values=rgb_seq[:,1:].reshape(-1, c, h, w),
@@ -493,7 +510,15 @@ class MotoGPT_Trainer:
         # print(pred['arm_action_preds'])    
         
         loss['action_gripper'] = masked_loss(pred['gripper_action_preds'], batch['actions'][..., -1:].float(), batch['mask'], 0, gripper_action_loss_func) if pred['gripper_action_preds'] is not None else torch.tensor(0.0).to(device)
-        loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+        if self.output_modality_tokens == "cross modal" :
+            if  batch["modality"][0] == "depth" :
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], depth_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+            elif batch["modality"][0] == "rgb" :   
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], rgb_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
+            else :
+                loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)    
+        else :
+            loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
         
         total_loss = 100 * loss['action_arm'] + loss['action_gripper'] + loss['latent_motion'] 
         loss['total_loss'] = total_loss

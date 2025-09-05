@@ -70,6 +70,7 @@ def main(cfg):
 
     train_dataset, eval_dataset = load_dataset(dataset_config_path, extra_data_config)
     
+    # breakpoint()
     dataloader_cls = partial(
         DataLoader, 
         pin_memory=True, # Accelerate data reading
@@ -99,11 +100,12 @@ def main(cfg):
             
     
     if isinstance(train_dataset, ConcatDataset) and len(train_dataset.datasets) == 2:
-    
-       
+        
+        print("uses depth and rgb")
+        
         train_dataset_rgb = train_dataset.datasets[0]
         train_dataset_depth = train_dataset.datasets[1]
-    
+        
         eval_dataset_rgb = eval_dataset.datasets[0]
         eval_dataset_depth = eval_dataset.datasets[1]
         # max_samples = 2000
