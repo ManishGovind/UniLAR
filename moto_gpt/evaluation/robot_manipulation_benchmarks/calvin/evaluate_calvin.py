@@ -78,7 +78,6 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, ep_len, num_sequ
     eval_sequences = get_sequences(num_sequences)
     num_seq_per_procs = num_sequences // num_procs
     eval_sequences = eval_sequences[num_seq_per_procs*procs_id:num_seq_per_procs*(procs_id+1)]
-
     results = []
     if not debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
