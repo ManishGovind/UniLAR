@@ -157,8 +157,9 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
     set_seed(12345)
-
-    os.environ["DISPLAY"] = ""
+    os.environ["SAPIEN_RENDERER_HEADLESS"] = "1"
+    os.environ["DISPLAY"] = ":1"
+    # os.environ["DISPLAY"] = ""
     # prevent a single jax process from taking up all the GPU memory
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
     gpus = tf.config.list_physical_devices("GPU")
