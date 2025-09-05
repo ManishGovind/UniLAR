@@ -1,5 +1,0 @@
-data_type: "rt1"
-lmdb_dir: "/work/mgovind1/data/lmdb_datasets/bridge/" 
-video_dir: "/work/mgovind1/data/video_datasets/bridge/image/"
-rgb_shape: [256, 320]
-skip_frame: 5

@@ -1,4 +1,0 @@
-data_type: "video_npz"
-npz_dir: "/work/mgovind1/data/task_ABC_D/"
-rgb_shape: [200, 200]
-skip_frame: 5
