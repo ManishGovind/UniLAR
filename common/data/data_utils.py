@@ -33,7 +33,7 @@ def load_dataset(data_config, extra_data_config):
 
     data_type = data_config.pop('data_type')
     if data_type == "calvin_mix" :
-        
+        modalities = data_config.pop('modalities')
 
     key_map = {
         'latent_motion_pred': 'do_extract_future_frames',
@@ -84,14 +84,14 @@ def load_dataset(data_config, extra_data_config):
             
     else:
        
-        if data_type == "calvin" :
+        if data_type != "calvin_mix" :
             dataset_cls = data_type2dataset_cls[data_type]
             train_dataset = dataset_cls(split='train', **data_config)
             eval_dataset = dataset_cls(split='val', **data_config)
         else :
             train_datasets = []
             eval_datasets = []
-            modalities =  ['calvin','calvin_depth','calvin_unified']
+            
             for dt in modalities:
                 dataset_cls = data_type2dataset_cls[dt]
                 train_dataset = dataset_cls(split='train', **data_config)

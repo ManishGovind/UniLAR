@@ -15,6 +15,7 @@ import omegaconf
 from glob import glob
 import shutil
 from collections import defaultdict
+import wandb
 
 class MotoGPT_Trainer:
     def __init__(
@@ -113,11 +114,9 @@ class MotoGPT_Trainer:
         self.pred_tokens_modality = moto_gpt_config['pred_tokens_modality']
         self.output_modality_tokens = moto_gpt_config['output_modality_tokens']
         self.pred_tokens_modality = moto_gpt_config.get('pred_tokens_modality', 'rgb')  
-        self.output_modality_tokens = moto_gpt_config.get('output_modality_tokens', 'same modal')  
+        self.output_modality_tokens = moto_gpt_config.get('output_modality_tokens', 'same-modal')  
 
-        # Optional: Sanity check and logging
-        assert isinstance(self.pred_tokens_modality, list), "'pred_tokens_modality' must be a list"
-        assert isinstance(self.output_modality_tokens, list), "'output_modality_tokens' must be a list"
+    
 
         # Optional print/debug
         print("Prediction Modality:", self.pred_tokens_modality)
@@ -159,6 +158,13 @@ class MotoGPT_Trainer:
         
     def train(self):
         step = 0
+        
+        if self.is_main :
+            experiment_name =  os.path.basename(self.save_path.rstrip("/"))
+            wandb.init(
+                project="moto-gpt",
+                name=experiment_name,
+            )
         
         for epoch in range(self.num_epochs+1):
             if epoch != 0:
@@ -510,7 +516,7 @@ class MotoGPT_Trainer:
         # print(pred['arm_action_preds'])    
         
         loss['action_gripper'] = masked_loss(pred['gripper_action_preds'], batch['actions'][..., -1:].float(), batch['mask'], 0, gripper_action_loss_func) if pred['gripper_action_preds'] is not None else torch.tensor(0.0).to(device)
-        if self.output_modality_tokens == "cross modal" :
+        if self.output_modality_tokens == "cross-modal" :
             if  batch["modality"][0] == "depth" :
                 loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], depth_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
             elif batch["modality"][0] == "rgb" :   
@@ -559,10 +565,27 @@ class MotoGPT_Trainer:
             text = text + ' eval_{}_loss: {:.5f}'.format(key, eval_log_loss[key])
         self.print(text)
         if self.is_main:
+            
+            log_wandb_dict = {}
+
             for key in log_loss:
                 self.writer.add_scalar(key+'_loss', log_loss[key], step)
+                log_wandb_dict[f"train/{key}_loss"] = log_loss[key].item()
+
             for key in eval_log_loss:
                 self.writer.add_scalar('eval_'+key+'_loss', eval_log_loss[key], step)
+                log_wandb_dict[f"eval/{key}_loss"] = eval_log_loss[key].item()
+
+            log_wandb_dict.update({
+                "lr": self.scheduler.get_last_lr()[0],
+                "FPS": fps.item(),
+                "loading_ratio": load_pecnt.item(),
+                "epoch": epoch,
+            })
+
+            # 👇 use epoch as the global step
+            wandb.log(log_wandb_dict, step=epoch)
+        
             self.writer.add_scalar("learning rate", self.scheduler.get_last_lr()[0], step)
             self.writer.add_scalar("FPS", fps, step)
             self.writer.add_scalar("loading time in total time", load_pecnt, step)
