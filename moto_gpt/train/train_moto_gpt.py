@@ -99,33 +99,56 @@ def main(cfg):
     #     eval_dataloader = dataloader_cls(eval_dataset)
             
     
-    if isinstance(train_dataset, ConcatDataset) and len(train_dataset.datasets) == 2:
+    if isinstance(train_dataset, ConcatDataset):
         
-        print("uses depth and rgb")
         
-        train_dataset_rgb = train_dataset.datasets[0]
-        train_dataset_depth = train_dataset.datasets[1]
+        print("Using multi-modal training with", len(train_dataset.datasets), "modalities")
+
+        modality_names = ['rgb','unified','depth']  
+
+        train_dataloaders = {}
+        eval_dataloaders = {}
+        MAX_SAMPLES = 3000
+        for i, modality in enumerate(modality_names):
+            train_ds = train_dataset.datasets[i]
+            eval_ds = eval_dataset.datasets[i]
+
+            # train_ds = Subset(train_dataset.datasets[i], list(range(min(len(train_dataset.datasets[i]), MAX_SAMPLES))))
+            # eval_ds = Subset(eval_dataset.datasets[i], list(range(min(len(eval_dataset.datasets[i]), MAX_SAMPLES))))
+
+            train_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True)
+            eval_sampler = DistributedSampler(eval_ds, num_replicas=world_size, rank=rank, shuffle=True)
+
+            train_dataloaders[modality] = dataloader_cls(train_ds, sampler=train_sampler, shuffle=False)
+            eval_dataloaders[modality] = dataloader_cls(eval_ds, sampler=eval_sampler, shuffle=False)
+
+        train_dataloader = RandomModalityBatchDataloader(train_dataloaders)
+        eval_dataloader = RandomModalityBatchDataloader(eval_dataloaders)
         
-        eval_dataset_rgb = eval_dataset.datasets[0]
-        eval_dataset_depth = eval_dataset.datasets[1]
-        # max_samples = 2000
-        # train_dataset_rgb = Subset(train_dataset_rgb, list(range(min(len(train_dataset_rgb), max_samples))))
-        # train_dataset_depth = Subset(train_dataset_depth, list(range(min(len(train_dataset_depth), max_samples))))
+        # train_dataset_rgb = train_dataset.datasets[0]
+        # train_dataset_depth = train_dataset.datasets[1]
+        
+        # eval_dataset_rgb = eval_dataset.datasets[0]
+        # eval_dataset_depth = eval_dataset.datasets[1]
+        # # max_samples = 2000
+        # # train_dataset_rgb = Subset(train_dataset_rgb, list(range(min(len(train_dataset_rgb), max_samples))))
+        # # train_dataset_depth = Subset(train_dataset_depth, list(range(min(len(train_dataset_depth), max_samples))))
  
-        sampler_rgb = DistributedSampler(train_dataset_rgb, num_replicas=world_size, rank=rank, shuffle=True)   
-        sampler_depth = DistributedSampler(train_dataset_depth, num_replicas=world_size, rank=rank, shuffle=True)
-        sampler_eval_rgb = DistributedSampler(eval_dataset_rgb, num_replicas=world_size, rank=rank, shuffle=True)   
-        sampler_eval_depth = DistributedSampler(eval_dataset_depth, num_replicas=world_size, rank=rank, shuffle=True)
+        # sampler_rgb = DistributedSampler(train_dataset_rgb, num_replicas=world_size, rank=rank, shuffle=True)   
+        # sampler_depth = DistributedSampler(train_dataset_depth, num_replicas=world_size, rank=rank, shuffle=True)
+        # sampler_eval_rgb = DistributedSampler(eval_dataset_rgb, num_replicas=world_size, rank=rank, shuffle=True)   
+        # sampler_eval_depth = DistributedSampler(eval_dataset_depth, num_replicas=world_size, rank=rank, shuffle=True)
     
 
-        train_dataloader_rgb = dataloader_cls(train_dataset_rgb, sampler=sampler_rgb,shuffle=False)
-        train_dataloader_depth = dataloader_cls(train_dataset_depth,sampler=sampler_depth,shuffle=False)
+        # train_dataloader_rgb = dataloader_cls(train_dataset_rgb, sampler=sampler_rgb,shuffle=False)
+        # train_dataloader_depth = dataloader_cls(train_dataset_depth,sampler=sampler_depth,shuffle=False)
         
-        eval_dataloader_rgb = dataloader_cls(eval_dataset_rgb,sampler=sampler_eval_rgb,shuffle=False)
-        eval_dataloader_depth = dataloader_cls(eval_dataset_depth,sampler=sampler_eval_depth,shuffle=False)
+        # eval_dataloader_rgb = dataloader_cls(eval_dataset_rgb,sampler=sampler_eval_rgb,shuffle=False)
+        # eval_dataloader_depth = dataloader_cls(eval_dataset_depth,sampler=sampler_eval_depth,shuffle=False)
+        
     
-        train_dataloader = RandomModalityBatchDataloader(train_dataloader_rgb, train_dataloader_depth)
-        eval_dataloader = RandomModalityBatchDataloader(eval_dataloader_rgb, eval_dataloader_depth)
+        # train_dataloader = RandomModalityBatchDataloader(train_dataloader_rgb, train_dataloader_depth)
+        # eval_dataloader = RandomModalityBatchDataloader(eval_dataloader_rgb, eval_dataloader_depth)
     else:
         # max_samples = 2000
         # train_dataset = Subset(train_dataset, list(range(min(len(train_dataset), max_samples))))

@@ -149,7 +149,7 @@ class MotoGPT_Trainer:
     
     def get_latent_motion_tokenizer(self, batch):
         modality = batch["modality"][0]  
-        if modality == 'depth' : 
+        if modality == 'depth' and self.pred_tokens_modality == 'depth': 
             return self.depth_latent_motion_tokenizer
         else :
             return self.latent_motion_tokenizer
@@ -277,7 +277,7 @@ class MotoGPT_Trainer:
         t = t - 1
         motion_tokenizer = self.get_latent_motion_tokenizer(batch)
         
-        if not is_depth :
+        if self.moto_gpt_config.pred_tokens_modality != "depth"  :
             if self.moto_gpt_config.pred_tokens_modality == "unified" :
                
                 gt_latent_motion_ids = motion_tokenizer(
@@ -450,7 +450,7 @@ class MotoGPT_Trainer:
                     f"No tokenizer available for modality='{modality}'. "
                     "Check cfg.use_depth_data and that both tokenizers were loaded."
                 )
-            if  modality != "depth":
+            if  self.moto_gpt_config.pred_tokens_modality != "depth"  :
                 
                 if self.moto_gpt_config.pred_tokens_modality == "unified"  :
                     all_latent_motion_ids = motion_tokenizer(
@@ -464,7 +464,7 @@ class MotoGPT_Trainer:
                     latent_motion_ids = all_latent_motion_ids["indices"].reshape(b, t, -1)    #unified motion tokens 
                     rgb_latent_motion_ids = all_latent_motion_ids["indices_rgb"].reshape(b, t, -1)
                     depth_latent_motion_ids = all_latent_motion_ids["indices_depth"].reshape(b, t, -1)
-                      
+                    # print("input ids in unified")  
                     
                 if self.moto_gpt_config.pred_tokens_modality == "rgb" :
                     latent_motion_ids = motion_tokenizer(
@@ -518,10 +518,13 @@ class MotoGPT_Trainer:
         loss['action_gripper'] = masked_loss(pred['gripper_action_preds'], batch['actions'][..., -1:].float(), batch['mask'], 0, gripper_action_loss_func) if pred['gripper_action_preds'] is not None else torch.tensor(0.0).to(device)
         if self.output_modality_tokens == "cross-modal" :
             if  batch["modality"][0] == "depth" :
+                # print("pred depth")
                 loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], depth_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
             elif batch["modality"][0] == "rgb" :   
+                # print("pred rgb")
                 loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], rgb_latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
             else :
+                # print("pred unified")
                 loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)    
         else :
             loss['latent_motion'] = masked_loss(pred['latent_motion_preds'], latent_motion_ids, batch['latent_mask'], 0, cross_entropy) if pred['latent_motion_preds'] is not None else torch.tensor(0.0).to(device)
@@ -540,16 +543,7 @@ class MotoGPT_Trainer:
         load_pecnt = self.accelerator.gather_for_metrics(load_pecnt).mean()
         fps = (self.bs_per_gpu*self.print_steps*(self.moto_gpt_config.sequence_length+1)) / (time()-clock)
         fps = self.accelerator.gather_for_metrics(torch.tensor(fps).to(self.device)).sum()
-        # if 100. * batch_idx * self.bs_per_gpu * self.accelerator.num_processes / len(self.train_prefetcher) > 100.0 :
-        #     print("debugging batch idx", batch_idx)
-        #     print("debugging batch idx", 100. * batch_idx * self.bs_per_gpu * self.accelerator.num_processes)
-        #     print(len(self.train_prefetcher))
-        # else :
-        #     print("debugging batch idx", batch_idx)
                 
-            
-            
-         
         text = 'Train Epoch: {} [{}/{} ({:.0f}%)] FPS:{:.5f} Load Pertentage:{:.5f} LR:{}'.format(
             epoch, 
             batch_idx * self.bs_per_gpu * self.accelerator.num_processes, 
@@ -583,7 +577,7 @@ class MotoGPT_Trainer:
                 "epoch": epoch,
             })
 
-            # 👇 use epoch as the global step
+
             wandb.log(log_wandb_dict, step=epoch)
         
             self.writer.add_scalar("learning rate", self.scheduler.get_last_lr()[0], step)

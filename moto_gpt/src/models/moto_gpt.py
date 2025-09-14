@@ -249,7 +249,7 @@ class MotoGPT(nn.Module):
         
         act_stacked_attention_mask = attention_mask.view(batch_size, sequence_length, 1)
         act_stacked_attention_mask = act_stacked_attention_mask.repeat(1, 1, n_tokens) # (b, t, n_tokens)
-
+                
         if self.latent_motion_pred:
             act_stacked_attention_mask[:,:,latent_motion_query_token_start_i:latent_motion_query_token_start_i+n_latent_motion_pred_tokens] = \
                 latent_mask.clone().view(batch_size, sequence_length, 1).repeat(1, 1, n_latent_motion_pred_tokens) # (b, t, n_latent_motion_pred_tokens)
