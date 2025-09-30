@@ -103,6 +103,7 @@ class MotoGPT(nn.Module):
         self.use_latent_motion_pos_embedding = use_latent_motion_pos_embedding
         # print(f"use_latent_motion_pos_embedding: {self.use_latent_motion_pos_embedding}")
         if self.use_latent_motion_pos_embedding:
+            print(f"use_latent_motion_pos_embedding: {self.use_latent_motion_pos_embedding}")
             self.embed_latent_motion_pos = nn.Embedding(per_latent_motion_len+1, hidden_size)
 
         # Layer norm
@@ -173,12 +174,12 @@ class MotoGPT(nn.Module):
         # Get obs and patch feature from Visual Encoder
         if self.freeze_vision:
             with torch.no_grad():
-                obs_embeddings, patch_embeddings = self.model_vision(rgb.reshape(batch_size, c, h, w))  # (b, img_feat_dim), (b, n_patches, patch_feat_dim)
+                obs_embeddings, patch_embeddings = self.model_vision(rgb.reshape(batch_size, c, h, w))  # (b, img_feat_dim), (b, n_patches, patch_feat_dim)    
         else:
             obs_embeddings, patch_embeddings = self.model_vision(rgb.reshape(batch_size, c, h, w))  # (b, img_feat_dim), (b, n_patches, patch_feat_dim)
         if obs_embeddings is not None:
             obs_embeddings = obs_embeddings.view(batch_size, 1, -1)  # (b, 1, img_feat_dim)
-            
+         
         # Embed images and patches
         if obs_embeddings is not None:
             obs_embeddings = self.embed_img(obs_embeddings.float())  # (b, 1, h)

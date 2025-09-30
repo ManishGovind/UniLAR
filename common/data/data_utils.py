@@ -91,7 +91,6 @@ def load_dataset(data_config, extra_data_config):
         else :
             train_datasets = []
             eval_datasets = []
-            
             for dt in modalities:
                 dataset_cls = data_type2dataset_cls[dt]
                 train_dataset = dataset_cls(split='train', **data_config)

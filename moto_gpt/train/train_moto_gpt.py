@@ -84,20 +84,7 @@ def main(cfg):
     accelerator = Accelerator()
     rank = accelerator.process_index
     world_size = accelerator.num_processes
-    # if isinstance(train_dataset, ConcatDataset) and len(train_dataset.datasets) == 2:
-        
-    #     split_index = len(train_dataset.datasets[0])  # first is RGB, second is Depth
-     
-    #     collator =  ConcatBalancedCollator(train_dataset ,split_index )
-    #     train_dataloader = dataloader_cls(train_dataset , collate_fn=collator)
-    #     eval_dataloader = dataloader_cls(eval_dataset)
-    # else : 
-    #     max_samples = 2000
-    #     train_dataset = Subset(train_dataset, list(range(min(len(train_dataset), max_samples))))
-    #     eval_dataset = Subset(eval_dataset, list(range(min(len(eval_dataset), max_samples))))
-    #     train_dataloader = dataloader_cls(train_dataset)
-    #     eval_dataloader = dataloader_cls(eval_dataset)
-            
+
     
     if isinstance(train_dataset, ConcatDataset):
         

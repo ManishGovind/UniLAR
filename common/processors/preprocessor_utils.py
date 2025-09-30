@@ -4,7 +4,7 @@ from common.processors.rgb_preprocessors import RGB_PreProcessor
 
 def get_model_vision_basic_config(model_vision_type):
     model_vision_type = model_vision_type.lower()
-    if "theia" in model_vision_type:
+    if "theia" or "siglip" in model_vision_type:
         rgb_shape = [224, 224]
         rgb_mean = [0.5, 0.5, 0.5]
         rgb_std = [0.5, 0.5, 0.5]

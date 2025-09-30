@@ -150,7 +150,6 @@ class LMDBDataset_for_MotoGPT(Dataset):
     def extract_lang_goal(self, idx, cur_episode):
         feature_dict = loads(self.txn.get(f'feature_dict_{idx}'.encode()))
         lang = feature_dict['observation']['natural_language_instruction'].decode().lower().strip('.')
-        print(lang)
         return lang
 
     def get_video_path(self, cur_episode):
