@@ -15,7 +15,6 @@ class MaeEncoder(nn.Module):
     def forward(self, images):
         vision_outputs = self.image_encoder(images)
         last_hidden_states = vision_outputs.last_hidden_state
-
         obs_features = last_hidden_states[:, 0, :]
         patch_features = last_hidden_states[:, 1:, :]
 
